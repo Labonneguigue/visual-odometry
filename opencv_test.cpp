@@ -9,11 +9,11 @@ public:
 
     void extractFeatures(cv::Mat& image, std::vector<cv::KeyPoint>& kps_0, std::vector<cv::KeyPoint>& kps_1, cv::Mat& desc)
     {
-        static const int cDefaultKeypointCount = 1500; ///< OpenCV default feature count
+        static const int cDefaultKeypointCount = 3000; ///< OpenCV default feature count
         static const int cImageBorderThreshold = 31; ///< Features are not detected on the border of the image, this specifies the border size
         static const int cPyramidFirstLevel = 0; ///< Needs to be set to 0
         static const int cBriefWta_k = 2; ///< Number of points used to compute one attribute of the BRIEF descriptor. Setting it to 2 means that we are comparing the brightness of 2 pixels
-        static const int cKeypointScoreType = cv::ORB::HARRIS_SCORE;  ///< Either Harris score or FAST score. Harris produces better (more stable) keypoints, but it is slower
+        static const int cKeypointScoreType = cv::ORB::FAST_SCORE;  ///< Either Harris score or FAST score. Harris produces better (more stable) keypoints, but it is slower
         static const int cKeypointFastThreshold = 20; ///< FAST corner detector threshold
         static const float cPyramidScaleFactor = 1.2F; ///< Scale in each image pyramid
         static const int   cPyramidLevelCount = 3; ///< Number of levels in the image pyramid
@@ -34,7 +34,7 @@ public:
         descriptors[1] = cv::Mat();
         std::swap(keypoints[0],keypoints[1]);
         keypoints[1].clear();
-        // std::vector<cv::Point2f> pts;
+        // std::vector<cv::Point2d> pts;
         // cv::goodFeaturesToTrack(image, pts, cDefaultKeypointCount, 0.01, 7);
         // for (auto & pt : pts) keypoints[1].push_back(cv::KeyPoint(pt, cBriefPatchSize));
         // orb->compute(image, keypoints[1], descriptors[1]);
@@ -47,14 +47,15 @@ public:
     void matchFeatures(std::vector<std::vector<cv::DMatch>>& mts)
     {
         matcher.knnMatch(descriptors[0], descriptors[1], mts, 2);
+        //flann_matcher.knnMatch(descriptors[0], descriptors[1], mts, 2);
     }
 
 private:
 
     std::vector<cv::KeyPoint> keypoints[2];
     cv::Mat descriptors[2];
-    //std::vector<std::vector<cv::DMatch>>   matches;
     cv::BFMatcher matcher = cv::BFMatcher(cv::NORM_HAMMING2);
+    //cv::FlannBasedMatcher flann_matcher = cv::FlannBasedMatcher();
 };
 
 int main()
@@ -78,7 +79,7 @@ int main()
     std::vector<cv::KeyPoint> kps[2];
     DetectorExtractorMatcher dem;
     std::vector< cv::DMatch > good_matches;
-    double min_dist = 32;
+    double min_dist = 30;
 
     while (true) {
         if (!capture.read(image)) {
@@ -94,8 +95,7 @@ int main()
         dem.matchFeatures(mts);
 
         good_matches.clear();
-        std::vector<cv::Point2f> matched_prev, matched_curr;
-        //for( int i = 0; i < descriptors.rows; i++ )
+        std::vector<cv::Point2d> matched_prev, matched_curr;
         for (auto & mt : mts)
         {
             for (auto & m : mt)
@@ -110,28 +110,26 @@ int main()
 
         assert(matched_curr.size() == matched_prev.size());
         cv::Mat F;
+        std::set<int> outliers;
+        static const double SAMPSON_ERROR_THRESHOLD = 50.0;
         if (matched_curr.size() > 8)
         {
-            F = cv::findFundamentalMat(matched_prev, matched_curr, CV_FM_RANSAC, 0.02);
-            // for (int i = 0 ; i < matched_curr.size() ; ++i)
-            // {
-            //     double error = cv::sampsonDistance(matched_curr[i], matched_prev[i], F);
-            // }
+            F = cv::findFundamentalMat(matched_prev, matched_curr, CV_FM_7POINT, 0.02);
+            for (int i = 0 ; i < matched_curr.size() ; ++i)
+            {
+                double error = cv::sampsonDistance(cv::Mat(matched_curr[i]), cv::Mat(matched_prev[i]), F);
+                if (std::isnan(error) || error > SAMPSON_ERROR_THRESHOLD) outliers.emplace(i);
+            }
         }
 
 
-        std::cout << "Keypoints: " << kps[1].size() << " Matches: " << mts.size() << " good matches: " << good_matches.size() << "\n";
 
-        for (auto& mt : good_matches)
+        std::cout << "Keypoints: " << kps[1].size() << " Matches: " << mts.size() << " good matches: " << good_matches.size() << " outliers: " << outliers.size() << "\n";
+
+        for (int i = 0 ; i < matched_curr.size() ; ++i)
         {
-            //cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
-            cv::line(image, kps[0][mt.queryIdx].pt, kps[1][mt.trainIdx].pt, cv::Scalar(0,0,255), 1, 1, 0);
+            if (outliers.find(i) == outliers.end()) cv::line(image, matched_curr[i], matched_prev[i], cv::Scalar(0,0,255), 1, 1, 0);
         }
-
-        // for (auto& kp : kps)
-        // {
-        //     cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
-        // }
 
         cv::imshow("frame", image);
         if (cv::waitKey(delay) >= 0) {
@@ -142,3 +140,14 @@ int main()
     capture.release();
     return 0;
 }
+
+
+        // for (auto& mt : good_matches)
+        // {
+        //     cv::line(image, kps[0][mt.queryIdx].pt, kps[1][mt.trainIdx].pt, cv::Scalar(0,0,255), 1, 1, 0);
+        // }
+
+        // for (auto& kp : kps)
+        // {
+        //     cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
+        // }
