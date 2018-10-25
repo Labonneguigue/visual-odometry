@@ -7,7 +7,7 @@ class DetectorExtractorMatcher
 {
 public:
 
-    void extractFeatures(cv::Mat& image, std::vector<cv::KeyPoint>& kps)
+    void extractFeatures(cv::Mat& image, std::vector<cv::KeyPoint>& kps_0, std::vector<cv::KeyPoint>& kps_1, cv::Mat& desc)
     {
         static const int cDefaultKeypointCount = 1500; ///< OpenCV default feature count
         static const int cImageBorderThreshold = 31; ///< Features are not detected on the border of the image, this specifies the border size
@@ -20,7 +20,7 @@ public:
         static const int   cBriefPatchSize = 31; ///< Size of the image patch on which the descriptor is computed
         static const float cMaximumPatchSize = (cBriefPatchSize + 1U) * std::pow(cPyramidScaleFactor, static_cast<float>(cPyramidLevelCount + 1U)) + 1U; // Maximum size of a orb feature patch as if applied to level 0
 
-        static cv::Ptr<cv::ORB> orb = cv::ORB::create();/*cDefaultKeypointCount
+        static cv::Ptr<cv::ORB> orb = cv::ORB::create(cDefaultKeypointCount
                                                     , cPyramidScaleFactor
                                                     , cPyramidLevelCount
                                                     , cImageBorderThreshold
@@ -28,24 +28,33 @@ public:
                                                     , cBriefWta_k
                                                     , cKeypointScoreType
                                                     , cBriefPatchSize
-                                                    , cKeypointFastThreshold);*/
+                                                    , cKeypointFastThreshold);
 
-        orb->detectAndCompute(image, cv::Mat(), keypoints, descriptors[1]);
-        kps = keypoints;
+        descriptors[0] = descriptors[1];
+        descriptors[1] = cv::Mat();
+        std::swap(keypoints[0],keypoints[1]);
+        keypoints[1].clear();
+        // std::vector<cv::Point2f> pts;
+        // cv::goodFeaturesToTrack(image, pts, cDefaultKeypointCount, 0.01, 7);
+        // for (auto & pt : pts) keypoints[1].push_back(cv::KeyPoint(pt, cBriefPatchSize));
+        // orb->compute(image, keypoints[1], descriptors[1]);
+        orb->detectAndCompute(image, cv::Mat(), keypoints[1], descriptors[1]);
+        kps_0 = keypoints[0];
+        kps_1 = keypoints[1];
+        desc = descriptors[1];
     }
 
-    void matchFeatures()
+    void matchFeatures(std::vector<std::vector<cv::DMatch>>& mts)
     {
-        if (descriptors[0].size() == 0) std::copy(descriptors[1].begin(), descriptors[1].end(), descriptors[0].begin());
-
+        matcher.knnMatch(descriptors[0], descriptors[1], mts, 2);
     }
 
 private:
 
-    std::vector<cv::KeyPoint> keypoints;
-    std::vector<unsigned char> descriptors[2];
-    std::vector<cv::DMatch>   matches;
-    cv::BFMatcher matcher = cv::BFMatcher(cv::NORM_HAMMING);
+    std::vector<cv::KeyPoint> keypoints[2];
+    cv::Mat descriptors[2];
+    //std::vector<std::vector<cv::DMatch>>   matches;
+    cv::BFMatcher matcher = cv::BFMatcher(cv::NORM_HAMMING2);
 };
 
 int main()
@@ -66,24 +75,63 @@ int main()
     }
 
     cv::Mat image;
-    std::vector<cv::KeyPoint> kps;
+    std::vector<cv::KeyPoint> kps[2];
     DetectorExtractorMatcher dem;
+    std::vector< cv::DMatch > good_matches;
+    double min_dist = 32;
 
     while (true) {
         if (!capture.read(image)) {
             break;
         }
 
-        cv::Mat gray;
+        cv::Mat gray, descriptors;
+        cv::cvtColor(image, gray, CV_BGR2GRAY);
 
-        //cv::cvtColor(image, gray, CV_BGR2GRAY);
+        dem.extractFeatures(image, kps[0], kps[1], descriptors);
 
-        dem.extractFeatures(image, kps);
+        std::vector<std::vector<cv::DMatch>> mts;
+        dem.matchFeatures(mts);
 
-        for (auto& kp : kps)
+        good_matches.clear();
+        std::vector<cv::Point2f> matched_prev, matched_curr;
+        //for( int i = 0; i < descriptors.rows; i++ )
+        for (auto & mt : mts)
         {
-            cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
+            for (auto & m : mt)
+                if( m.distance < min_dist )
+                {
+                    good_matches.push_back( m );
+                    matched_prev.push_back(kps[0][m.queryIdx].pt);
+                    matched_curr.push_back(kps[1][m.trainIdx].pt);
+                    break;
+                }
         }
+
+        assert(matched_curr.size() == matched_prev.size());
+        cv::Mat F;
+        if (matched_curr.size() > 8)
+        {
+            F = cv::findFundamentalMat(matched_prev, matched_curr, CV_FM_RANSAC, 0.02);
+            // for (int i = 0 ; i < matched_curr.size() ; ++i)
+            // {
+            //     double error = cv::sampsonDistance(matched_curr[i], matched_prev[i], F);
+            // }
+        }
+
+
+        std::cout << "Keypoints: " << kps[1].size() << " Matches: " << mts.size() << " good matches: " << good_matches.size() << "\n";
+
+        for (auto& mt : good_matches)
+        {
+            //cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
+            cv::line(image, kps[0][mt.queryIdx].pt, kps[1][mt.trainIdx].pt, cv::Scalar(0,0,255), 1, 1, 0);
+        }
+
+        // for (auto& kp : kps)
+        // {
+        //     cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
+        // }
 
         cv::imshow("frame", image);
         if (cv::waitKey(delay) >= 0) {
