@@ -58,35 +58,57 @@ private:
     //cv::FlannBasedMatcher flann_matcher = cv::FlannBasedMatcher();
 };
 
+template<typename T>
+T kph2ms(T kph)
+{
+    return (static_cast<T>(1000.0)*kph)/static_cast<T>(3600.0);
+}
+
 int main()
 {
 	cv::TermCriteria termcrit(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 20, 0.03);
-    bool SET_CAMERA = false;
+    const bool SET_CAMERA = false;
     // Open vid reader
-    int delay = 20;
+    const int delay = 20;
+    const int fps = 20; // video shot at 20 fps
+    constexpr float delta_t = 1.0 / static_cast<float>(fps);
+
     cv::VideoCapture capture;
     if (SET_CAMERA) {
         capture.open(0); // open the default camera
     } else {
-        capture.open("/home/uid22654/videos_code/test.mp4");
+        //capture.open("/home/uid22654/videos_code/test.mp4");
+        capture.open("/home/uid22654/videos_code/train.mp4");
     }
     if (!capture.isOpened()) {
         std::cout << "cannot read video!\n";
         return -1;
     }
 
+    std::ifstream ground_truth("/home/uid22654/videos_code/train_gt.txt");
+
     cv::Mat image;
     std::vector<cv::KeyPoint> kps[2];
     DetectorExtractorMatcher dem;
     double min_dist = 30;
 
-    double focal = 200.0;
+    // OpenPlus 3: 29mm | LePro 3: 4.04->26.81
+    double focal = 8.0;
     cv::Point2d pp (image.cols/2, image.rows/2);
+
+    long double cum_coeff = 0.0;
+    int frames = 0;
 
     while (true) {
         if (!capture.read(image)) {
             break;
         }
+
+        ++frames;
+        std::string line;
+        std::getline(ground_truth, line);
+        double speed = kph2ms(std::atof(line.c_str()));
+        std::cout << "Speed: " << speed << "\n";
 
         // Convert image to grayscale because keypoint detection works in 1 dimension
         cv::Mat gray, descriptors;
@@ -137,14 +159,19 @@ int main()
 
             // Recover pose: rotation (R) and translation (t) from one frame to the next.
             cv::recoverPose(F, matched_prev, matched_curr, R, t, focal, pp );
+
+            // Print translation (t) matrix
+            std::cout << "t: \n";
+            for (int i = 0 ; i<t.rows ; ++i)
+            {
+                double coeff = std::abs( (speed/fps) / t.at<int>(i,0) );
+                std::cout << std::setprecision(15) << coeff << "\n";
+                if (i == 0) cum_coeff += coeff;
+            }
+            std::cout << "\n";
         }
 
         std::cout << "Keypoints: " << kps[1].size() << " Matches: " << matches.size() << " good matches: " << good_matches.size() << " outliers: " << outliers_count << "\n";
-
-        // Print translation (t) matrix
-        std::cout << "t: ";
-        for (int i = 0 ; i<t.rows ; ++i) std::cout << t.at<int>(i,0) << " ";
-        std::cout << "\n";
 
         // Plot lines between matched keypoint (inliers)
         for (int i = 0 ; i < matched_curr.size() ; ++i)
@@ -166,6 +193,10 @@ int main()
 
     }
     capture.release();
+
+    cum_coeff /= frames;
+    std::cout << "Cumul coeff: " << std::setprecision(10) << cum_coeff;
+
     return 0;
 }
 
