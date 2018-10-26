@@ -78,7 +78,6 @@ int main()
     cv::Mat image;
     std::vector<cv::KeyPoint> kps[2];
     DetectorExtractorMatcher dem;
-    std::vector< cv::DMatch > good_matches;
     double min_dist = 30;
 
     double focal = 200.0;
@@ -89,19 +88,20 @@ int main()
             break;
         }
 
+        // Convert image to grayscale because keypoint detection works in 1 dimension
         cv::Mat gray, descriptors;
         cv::cvtColor(image, gray, CV_BGR2GRAY);
 
+        // Detect keypoint locations and extract their descriptors
         dem.extractFeatures(image, kps[0], kps[1], descriptors);
-
         std::vector<std::vector<cv::DMatch>> matches;
         dem.matchFeatures(matches);
 
-        good_matches.clear();
+        std::vector< cv::DMatch > good_matches;
         std::vector<cv::Point2d> matched_prev, matched_curr, outlier_prev, outlier_curr;
         for (auto & match : matches)
         {
-            const float ratio = 0.75; // As in Lowe's paper; can be tuned
+            const float ratio = 0.70; // As in Lowe's paper; can be tuned
             if (match[0].distance < ratio * match[1].distance)
             {
                 good_matches.push_back( match[0] );
@@ -113,7 +113,9 @@ int main()
         assert(matched_curr.size() == matched_prev.size());
         cv::Mat F, R, t;
         int outliers_count = 0;
-        static const double SAMPSON_ERROR_THRESHOLD = 5000000000000.0;
+        static const double SAMPSON_ERROR_THRESHOLD = 50.0;
+        // If matches, then computation of the Fundamental matrix using ransac and
+        // outlier rejection
         if (matched_curr.size() > 8)
         {
             std::vector<uchar> inliers(matched_prev.size(),0);
@@ -132,26 +134,31 @@ int main()
             }
 
             assert(matched_curr.size() == matched_prev.size());
-            cv::recoverPose(F, matched_prev, matched_curr, R, t, focal, pp );
 
+            // Recover pose: rotation (R) and translation (t) from one frame to the next.
+            cv::recoverPose(F, matched_prev, matched_curr, R, t, focal, pp );
         }
 
         std::cout << "Keypoints: " << kps[1].size() << " Matches: " << matches.size() << " good matches: " << good_matches.size() << " outliers: " << outliers_count << "\n";
 
+        // Print translation (t) matrix
         std::cout << "t: ";
         for (int i = 0 ; i<t.rows ; ++i) std::cout << t.at<int>(i,0) << " ";
         std::cout << "\n";
 
+        // Plot lines between matched keypoint (inliers)
         for (int i = 0 ; i < matched_curr.size() ; ++i)
         {
             cv::line(image, matched_curr[i], matched_prev[i], cv::Scalar(255,0,0), 1, 1, 0);
         }
 
+        // Plot outliers
         for (int i = 0 ; i < outlier_curr.size() ; ++i)
         {
             cv::line(image, outlier_curr[i], outlier_prev[i], cv::Scalar(0,0,255), 1, 1, 0);
         }
 
+        // Display image with overlays
         cv::imshow("frame", image);
         if (cv::waitKey(delay) >= 0) {
             break;
