@@ -111,16 +111,18 @@ int main()
         }
 
         assert(matched_curr.size() == matched_prev.size());
-        cv::Mat F, R, t, outliers;
+        cv::Mat F, R, t;
         int outliers_count = 0;
-        static const double SAMPSON_ERROR_THRESHOLD = 50.0;
+        static const double SAMPSON_ERROR_THRESHOLD = 5000000000000.0;
         if (matched_curr.size() > 8)
         {
-            F = cv::findFundamentalMat(matched_prev, matched_curr, outliers, CV_FM_7POINT, 0.02);
+            std::vector<uchar> inliers(matched_prev.size(),0);
+            F = cv::findFundamentalMat(matched_prev, matched_curr, inliers, CV_FM_RANSAC); // 0.02
+            std::vector<uchar>::const_iterator itIn= inliers.begin();
             for (int i = 0 ; i < matched_curr.size() ; ++i)
             {
                 double error = cv::sampsonDistance(cv::Mat(matched_curr[i]), cv::Mat(matched_prev[i]), F);
-                if (std::isnan(error) || error > SAMPSON_ERROR_THRESHOLD){
+                if (std::isnan(error) || error > SAMPSON_ERROR_THRESHOLD || !(*itIn)){
                     ++outliers_count;
                     outlier_curr.push_back(matched_curr[i]);
                     outlier_prev.push_back(matched_prev[i]);
