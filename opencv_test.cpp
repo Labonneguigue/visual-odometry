@@ -81,6 +81,9 @@ int main()
     std::vector< cv::DMatch > good_matches;
     double min_dist = 30;
 
+    double focal = 200.0;
+    cv::Point2d pp (image.cols/2, image.rows/2);
+
     while (true) {
         if (!capture.read(image)) {
             break;
@@ -91,44 +94,60 @@ int main()
 
         dem.extractFeatures(image, kps[0], kps[1], descriptors);
 
-        std::vector<std::vector<cv::DMatch>> mts;
-        dem.matchFeatures(mts);
+        std::vector<std::vector<cv::DMatch>> matches;
+        dem.matchFeatures(matches);
 
         good_matches.clear();
-        std::vector<cv::Point2d> matched_prev, matched_curr;
-        for (auto & mt : mts)
+        std::vector<cv::Point2d> matched_prev, matched_curr, outlier_prev, outlier_curr;
+        for (auto & match : matches)
         {
-            for (auto & m : mt)
-                if( m.distance < min_dist )
-                {
-                    good_matches.push_back( m );
-                    matched_prev.push_back(kps[0][m.queryIdx].pt);
-                    matched_curr.push_back(kps[1][m.trainIdx].pt);
-                    break;
-                }
-        }
-
-        assert(matched_curr.size() == matched_prev.size());
-        cv::Mat F;
-        std::set<int> outliers;
-        static const double SAMPSON_ERROR_THRESHOLD = 50.0;
-        if (matched_curr.size() > 8)
-        {
-            F = cv::findFundamentalMat(matched_prev, matched_curr, CV_FM_7POINT, 0.02);
-            for (int i = 0 ; i < matched_curr.size() ; ++i)
+            const float ratio = 0.75; // As in Lowe's paper; can be tuned
+            if (match[0].distance < ratio * match[1].distance)
             {
-                double error = cv::sampsonDistance(cv::Mat(matched_curr[i]), cv::Mat(matched_prev[i]), F);
-                if (std::isnan(error) || error > SAMPSON_ERROR_THRESHOLD) outliers.emplace(i);
+                good_matches.push_back( match[0] );
+                matched_prev.push_back(kps[0][match[0].queryIdx].pt);
+                matched_curr.push_back(kps[1][match[0].trainIdx].pt);
             }
         }
 
+        assert(matched_curr.size() == matched_prev.size());
+        cv::Mat F, R, t, outliers;
+        int outliers_count = 0;
+        static const double SAMPSON_ERROR_THRESHOLD = 50.0;
+        if (matched_curr.size() > 8)
+        {
+            F = cv::findFundamentalMat(matched_prev, matched_curr, outliers, CV_FM_7POINT, 0.02);
+            for (int i = 0 ; i < matched_curr.size() ; ++i)
+            {
+                double error = cv::sampsonDistance(cv::Mat(matched_curr[i]), cv::Mat(matched_prev[i]), F);
+                if (std::isnan(error) || error > SAMPSON_ERROR_THRESHOLD){
+                    ++outliers_count;
+                    outlier_curr.push_back(matched_curr[i]);
+                    outlier_prev.push_back(matched_prev[i]);
+                    matched_curr.erase(matched_curr.begin() + i);
+                    matched_prev.erase(matched_prev.begin() + i);
+                }
+            }
 
+            assert(matched_curr.size() == matched_prev.size());
+            cv::recoverPose(F, matched_prev, matched_curr, R, t, focal, pp );
 
-        std::cout << "Keypoints: " << kps[1].size() << " Matches: " << mts.size() << " good matches: " << good_matches.size() << " outliers: " << outliers.size() << "\n";
+        }
+
+        std::cout << "Keypoints: " << kps[1].size() << " Matches: " << matches.size() << " good matches: " << good_matches.size() << " outliers: " << outliers_count << "\n";
+
+        std::cout << "t: ";
+        for (int i = 0 ; i<t.rows ; ++i) std::cout << t.at<int>(i,0) << " ";
+        std::cout << "\n";
 
         for (int i = 0 ; i < matched_curr.size() ; ++i)
         {
-            if (outliers.find(i) == outliers.end()) cv::line(image, matched_curr[i], matched_prev[i], cv::Scalar(0,0,255), 1, 1, 0);
+            cv::line(image, matched_curr[i], matched_prev[i], cv::Scalar(255,0,0), 1, 1, 0);
+        }
+
+        for (int i = 0 ; i < outlier_curr.size() ; ++i)
+        {
+            cv::line(image, outlier_curr[i], outlier_prev[i], cv::Scalar(0,0,255), 1, 1, 0);
         }
 
         cv::imshow("frame", image);
