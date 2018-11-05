@@ -13,6 +13,7 @@ add_executable(opencv_test
 target_sources(opencv_test
     PUBLIC
         "${CMAKE_CURRENT_LIST_DIR}/opencv_test.h"
+        "${CMAKE_CURRENT_LIST_DIR}/utils.h"
 )
 
 target_link_libraries(opencv_test

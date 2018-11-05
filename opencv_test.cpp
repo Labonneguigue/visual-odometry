@@ -3,6 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <bitset>
 
+#include "utils.h"
+
 class DetectorExtractorMatcher
 {
 public:
@@ -58,20 +60,16 @@ private:
     //cv::FlannBasedMatcher flann_matcher = cv::FlannBasedMatcher();
 };
 
-template<typename T>
-T kph2ms(T kph)
-{
-    return (static_cast<T>(1000.0)*kph)/static_cast<T>(3600.0);
-}
-
 int main()
 {
 	cv::TermCriteria termcrit(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 20, 0.03);
     const bool SET_CAMERA = false;
     // Open vid reader
-    const int delay = 20;
+    const int delay = 0;
     const int fps = 20; // video shot at 20 fps
     constexpr float delta_t = 1.0 / static_cast<float>(fps);
+    const int W = 1164;
+    const int H = 874;
 
     cv::VideoCapture capture;
     if (SET_CAMERA) {
@@ -92,12 +90,18 @@ int main()
     DetectorExtractorMatcher dem;
     double min_dist = 30;
 
-    // OpenPlus 3: 29mm | LePro 3: 4.04->26.81
-    double focal = 8.0;
-    cv::Point2d pp (image.cols/2, image.rows/2);
+    double focal = 910.0;
+    cv::Point2d pp (image.rows/2, image.cols/2);
+    //cv::Point2d pp (image.cols/2, image.rows/2);
 
     long double cum_coeff = 0.0;
     int frames = 0;
+
+    capture.read(image);
+    double scale = static_cast<double>(W)/static_cast<double>(image.size[1]);
+    focal *= scale;
+
+    std::cout << "Image size: " << image.size[0] << " " << image.size[1] << " Focal: " << focal << "\n";
 
     while (true) {
         if (!capture.read(image)) {
@@ -107,15 +111,20 @@ int main()
         ++frames;
         std::string line;
         std::getline(ground_truth, line);
-        double speed = kph2ms(std::atof(line.c_str()));
+        double speed = utl::kph2ms(std::atof(line.c_str()));
         std::cout << "Speed: " << speed << "\n";
 
         // Convert image to grayscale because keypoint detection works in 1 dimension
         cv::Mat gray, descriptors;
         cv::cvtColor(image, gray, CV_BGR2GRAY);
 
+        cv::Point2i roi_xy(0,100);
+        cv::Point2i roiWidthHeight(gray.size[1], gray.size[0] - 110);
+        cv::Rect roi(roi_xy, roiWidthHeight);
+        cv::Mat image_roi(image, roi);
+
         // Detect keypoint locations and extract their descriptors
-        dem.extractFeatures(image, kps[0], kps[1], descriptors);
+        dem.extractFeatures(image_roi, kps[0], kps[1], descriptors);
         std::vector<std::vector<cv::DMatch>> matches;
         dem.matchFeatures(matches);
 
@@ -133,7 +142,7 @@ int main()
         }
 
         assert(matched_curr.size() == matched_prev.size());
-        cv::Mat F, R, t;
+        cv::Mat F, E, R, t;
         int outliers_count = 0;
         static const double SAMPSON_ERROR_THRESHOLD = 50.0;
         // If matches, then computation of the Fundamental matrix using ransac and
@@ -157,17 +166,30 @@ int main()
 
             assert(matched_curr.size() == matched_prev.size());
 
+            //F = cv::findFundamentalMat(matched_prev, matched_curr, inliers, CV_FM_RANSAC); // 0.02
+            E = cv::findEssentialMat(matched_prev, matched_curr, focal, pp, CV_FM_RANSAC);
             // Recover pose: rotation (R) and translation (t) from one frame to the next.
-            cv::recoverPose(F, matched_prev, matched_curr, R, t, focal, pp );
+            cv::recoverPose(E, matched_prev, matched_curr, R, t, focal, pp );
+
+            // Print rotation matrix (R)
+            std::cout << "R: \n";
+            print_matrix<double>(R);
 
             // Print translation (t) matrix
             std::cout << "t: \n";
             for (int i = 0 ; i<t.rows ; ++i)
             {
-                double coeff = std::abs( (speed/fps) / t.at<int>(i,0) );
-                std::cout << std::setprecision(15) << coeff << "\n";
-                if (i == 0) cum_coeff += coeff;
+                // double coeff = std::abs( (speed/fps) / t.at<double>(i,0) );
+                // std::cout << std::setprecision(15) << coeff << "\n";
+                std::cout << t.at<double>(i,0) << " ";
+                //if (i == 0) cum_coeff += coeff;
             }
+            std::cout << "\n";
+
+            // Print fundamental matrix (F)
+            //std::cout << "F: \n";
+            //print_matrix(F);
+
             std::cout << "\n";
         }
 
@@ -176,21 +198,18 @@ int main()
         // Plot lines between matched keypoint (inliers)
         for (int i = 0 ; i < matched_curr.size() ; ++i)
         {
-            cv::line(image, matched_curr[i], matched_prev[i], cv::Scalar(255,0,0), 1, 1, 0);
+            cv::line(image, cv::Point2i(matched_curr[i]) + roi_xy, cv::Point2i(matched_prev[i]) + roi_xy, cv::Scalar(255,0,0), 1, 1, 0);
         }
 
         // Plot outliers
         for (int i = 0 ; i < outlier_curr.size() ; ++i)
         {
-            cv::line(image, outlier_curr[i], outlier_prev[i], cv::Scalar(0,0,255), 1, 1, 0);
+            cv::line(image, cv::Point2i(outlier_curr[i]) + roi_xy, cv::Point2i(outlier_prev[i]) + roi_xy, cv::Scalar(0,0,255), 1, 1, 0);
         }
 
         // Display image with overlays
         cv::imshow("frame", image);
-        if (cv::waitKey(delay) >= 0) {
-            break;
-        }
-
+        cv::waitKey(delay);
     }
     capture.release();
 
@@ -199,14 +218,3 @@ int main()
 
     return 0;
 }
-
-
-        // for (auto& mt : good_matches)
-        // {
-        //     cv::line(image, kps[0][mt.queryIdx].pt, kps[1][mt.trainIdx].pt, cv::Scalar(0,0,255), 1, 1, 0);
-        // }
-
-        // for (auto& kp : kps)
-        // {
-        //     cv::circle(image, kp.pt, 2, cv::Scalar(0, 0, 255));
-        // }
