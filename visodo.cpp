@@ -65,7 +65,7 @@ int main()
 	cv::TermCriteria termcrit(cv::TermCriteria::COUNT | cv::TermCriteria::EPS, 20, 0.03);
     const bool SET_CAMERA = false;
     // Open vid reader
-    const int delay = 0;
+    const int delay = 1;
     const int fps = 20; // video shot at 20 fps
     constexpr float delta_t = 1.0 / static_cast<float>(fps);
     const int W = 1164;

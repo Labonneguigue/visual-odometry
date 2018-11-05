@@ -7,12 +7,11 @@ set(CMAKE_CXX_STANDARD 11)
 find_package(OpenCV 3.4.0 REQUIRED)
 
 add_executable(opencv_test
-    "${CMAKE_CURRENT_LIST_DIR}/opencv_test.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/visodo.cpp"
 )
 
 target_sources(opencv_test
     PUBLIC
-        "${CMAKE_CURRENT_LIST_DIR}/opencv_test.h"
         "${CMAKE_CURRENT_LIST_DIR}/utils.h"
 )
 
